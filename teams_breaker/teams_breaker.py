@@ -26,66 +26,8 @@ def build_argparser() -> argparse.ArgumentParser:
         dest="list",
         type=str,
         default=None,
-        required=False,
+        required=True,
         help="Full path to a file containing target emails. One per line.",
-    )
-    parser.add_argument(
-        "-c",
-        "--configuration",
-        dest="configuration",
-        default=None,
-        type=str,
-        required=False,
-        help="Full path to a file containing the configuration to the room and message.",
-    )
-    parser.add_argument(
-        "-a",
-        "--attachment",
-        dest="attachment",
-        default=None,
-        type=str,
-        required=False,
-        help="Full path to the attachment which will be sent to the victim.",
-    )
-    parser.add_argument(
-        "-s",
-        "--sharepoint",
-        dest="sharepoint",
-        type=str,
-        required=False,
-        default=None,
-        help="Manually specify sharepoint name (e.g. mytenant.sharepoint.com would be --sharepoint mytenant)",
-    )
-    parser.add_argument(
-        "--no-confirm",
-        dest="interactive",
-        required=False,
-        action="store_false",
-        help="Do not ask for confirmation before sending a phishing message to a victim.",
-    )
-    parser.add_argument(
-        "--enum-users",
-        dest="enum_users",
-        required=False,
-        default=False,
-        action="store_true",
-        help="Run in enumeration mode. Only print user emails and status information.",
-    )
-    parser.add_argument(
-        "--dry-run",
-        dest="dry_run",
-        required=False,
-        default=False,
-        action="store_true",
-        help="Run in dry run mode. Print status",
-    )
-    parser.add_argument(
-        "--dry-run-self",
-        dest="dry_run_self",
-        required=False,
-        default=False,
-        action="store_true",
-        help="Run in dry run self mode. Print status",
     )
     return parser
 
@@ -133,24 +75,15 @@ if __name__ == "__main__":
     args = build_argparser().parse_args()
 
     configuration = None
-    if args.configuration and Path(args.configuration).is_file():
-        with open(args.configuration) as file:
-            configuration = yaml.safe_load(file)
-        if configuration.get("log"):
-            logger.add(configuration.get("log"))
 
-    if args.enum_users:
-        logger.info("Running in enumeration mode.")
+    logger.info("Running in enumeration mode.")
 
-    if args.configuration and args.list:
-        logger.error("Cannot use both configuration file and list parameters at the same time.")
-        sys.exit(1)
 
     to_upload = None
 
     users = None
     list_path = None
-    list_path = Path(args.list) if args.list else Path(configuration["user_list"])
+    list_path = Path(args.list)
 
     if list_path.is_file():
         users = list_path.read_text().strip().splitlines()
@@ -159,84 +92,12 @@ if __name__ == "__main__":
         sys.exit(1)
 
     bearer_token, skype_token, sharepoint_token, sender_info = teams_api.authenticate(
-        args.username, args.password, args.sharepoint
+        args.username, args.password, False
     )
-
-    if args.sharepoint:
-        sender_sharepoint_url = "https://%s-my.sharepoint.com" % (args.sharepoint)
-    else:
-        sender_sharepoint_url = "https://%s-my.sharepoint.com" % sender_info.get("tenantName")
 
     sender_drive = args.username.replace("@", "_").replace(".", "_").lower()
 
     method = "closed_chat"
-    if configuration.get("method"):
-        method = configuration.get("method")
 
-    if args.enum_users:
-        print_users_status(bearer_token, users)
-        sys.exit(0)
-
-    if args.dry_run and configuration:
-        total = len(users)
-        successes = 0
-        for i, u in enumerate(users):
-            logger.info(f"Sending message to {u} ({i+1}/{total})")
-            ustatus = TeamsUser(bearer_token, u).get_status()
-
-            if not ustatus:
-                logger.warning(f"Could not get status for user: {u}. Skipping...")
-                continue
-
-            if not ustatus.get("displayName"):
-                logger.warning(f"Could not get displayName for user: {u}. Skipping...")
-                continue
-
-            ustatus["displayName"] = ustatus["displayName"].title()
-
-            logger.info(f"Creating meeting with {ustatus.get('displayName')}, {configuration['chat_title']} as name")
-
-            template = configuration["message"]
-            message = convert_str_to_html(chevron.render(template, ustatus))
-            print(message)
-            logger.success(f"Message sent to {u}")
-            successes += 1
-
-        logger.info(f"Sent {successes}/{total} messages succesfully!")
-
-        sys.exit(0)
-
-    if args.send and configuration:
-        total = len(users)
-        successes = 0
-
-        upload_info = None
-        """
-        if to_upload:
-            upload_info = teams_api.file_upload(
-                sharepoint_token, sender_sharepoint_url, sender_drive, to_upload, sender_info
-            )
-
-        for i, u in enumerate(users):
-            logger.info(f"Sending message to {u} ({i+1}/{total})")
-            template = configuration["message"]
-            time.sleep(1)
-            if send_phish(
-                bearer_token,
-                skype_token,
-                sender_sharepoint_url,
-                sender_drive,
-                sender_info,
-                configuration["chat_title"],
-                u,
-                template,
-                preview=False,
-                upload_info=upload_info,
-                method=method,
-                interactive=args.interactive,
-            ):
-                successes += 1
-        logger.info(f"Sent {successes}/{total} messages succesfully!")
-
-        sys.exit(0)
-        """
+    print_users_status(bearer_token, users)
+    sys.exit(0)

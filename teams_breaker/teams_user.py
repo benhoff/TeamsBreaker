@@ -19,7 +19,7 @@ class TeamsUser:
         }
 
         content = requests.get(
-            "https://teams.microsoft.com/api/mt/emea/beta/users/%s/externalsearchv3?includeTFLUsers=true"
+            "https://teams.microsoft.com/api/mt/amer-03/beta/users/%s/externalsearchv3?includeTFLUsers=true"
             % (self.username),
             headers=headers,
             timeout=10,
