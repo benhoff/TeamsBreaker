@@ -14,7 +14,6 @@ from teams_user import TeamsUser
 REFRESH_INTERVAL = 10  # seconds between full status refreshes
 STAGGER_DELAY = 0.33   # delay between individual presence requests
 
-
 def build_argparser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -33,11 +32,9 @@ def build_argparser() -> argparse.ArgumentParser:
     )
     return parser
 
-
 def create_thread_by_method(method):
     sw = {"closed_chat": teams_api.chat_create_closed_chat, "meeting": teams_api.chat_create_meeting}
     return sw.get(method)
-
 
 def get_users_status(bearer_token, users):
     """Returns a list of [email, availability, device type] for each user."""
@@ -46,16 +43,19 @@ def get_users_status(bearer_token, users):
         user = TeamsUser(bearer_token, email)
         ustatus = user.get_status()
         if ustatus:
-            # Stagger presence requests
             time.sleep(STAGGER_DELAY)
-            user_info = user.check_teams_presence()[0]
-            presence = user_info["presence"]
-            availability = presence.get("availability", "Unknown")
-            statuses.append([email, availability, presence.get("deviceType", "Unknown")])
+            presence_data = user.check_teams_presence()
+            if presence_data is None:
+                statuses.append([email, "No presence", "No presence"])
+            else:
+                # Assume presence_data is a list and we use the first element.
+                user_info = presence_data[0]
+                presence = user_info.get("presence", {})
+                availability = presence.get("availability", "Unknown")
+                statuses.append([email, availability, presence.get("deviceType", "Unknown")])
         else:
             statuses.append([email, "Could not read", "Could not read"])
     return statuses
-
 
 def write_status_csv(statuses, filename="user_status.csv"):
     with open(filename, "w", newline="") as f:
@@ -63,6 +63,11 @@ def write_status_csv(statuses, filename="user_status.csv"):
         writer.writerow(["Email", "Availability", "Device Type"])
         writer.writerows(statuses)
 
+def update_user_list_file(list_path: Path, users):
+    """Writes the current user list back to the file."""
+    with open(list_path, "w") as f:
+        for user in users:
+            f.write(user + "\n")
 
 def prompt_input(win, prompt):
     """Prompt user input in the provided window (curses)."""
@@ -74,10 +79,17 @@ def prompt_input(win, prompt):
     curses.noecho()
     return input_str.strip()
 
-
-def curses_main(stdscr, bearer_token, users):
+def curses_main(stdscr, bearer_token, users, list_path):
     curses.curs_set(0)  # hide cursor
     stdscr.nodelay(True)  # non-blocking input
+
+    # Initialize colors if supported.
+    if curses.has_colors():
+        curses.start_color()
+        curses.init_pair(1, curses.COLOR_RED, curses.COLOR_BLACK)     # Busy -> red
+        curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)   # Available -> green
+        curses.init_pair(3, curses.COLOR_BLUE, curses.COLOR_BLACK)    # Offline -> blue
+
     height, width = stdscr.getmaxyx()
 
     # Create subwindows: one for status and one for commands/input.
@@ -94,7 +106,7 @@ def curses_main(stdscr, bearer_token, users):
             write_status_csv(statuses)  # optional: update CSV file
             last_update = now
 
-        # Clear windows and draw borders if desired.
+        # Clear windows.
         status_win.clear()
         input_win.clear()
 
@@ -106,19 +118,35 @@ def curses_main(stdscr, bearer_token, users):
         # Display each user status.
         for idx, row in enumerate(statuses):
             email, availability, device = row
-            line = f" {email:<28} | {availability:<18} | {device}"
-            # Prevent writing outside the window height
-            if idx + 2 < height - 4:
-                status_win.addstr(idx + 2, 0, line)
+            row_y = idx + 2
+            if row_y >= height - 4:
+                break  # prevent writing outside the window
 
+            # Print email column.
+            status_win.addstr(row_y, 0, f" {email:<28} | ")
+
+            # Determine color for availability.
+            color_attr = curses.A_NORMAL
+            if curses.has_colors():
+                if availability.lower() == "busy":
+                    color_attr = curses.color_pair(1)
+                elif availability.lower() == "available":
+                    color_attr = curses.color_pair(2)
+                elif availability.lower() == "offline":
+                    color_attr = curses.color_pair(3)
+
+            # Print availability column in color.
+            status_win.addstr(f"{availability:<18}", color_attr)
+            # Continue with device type.
+            status_win.addstr(" | " + f"{device}")
         status_win.refresh()
 
-        # Display the command options.
+        # Display command options.
         input_win.addstr(0, 0, "Commands: (a)dd user, (r)emove user, (q)uit")
         input_win.addstr(1, 0, "Press the corresponding key for action.")
         input_win.refresh()
 
-        # Check for user input
+        # Check for user input.
         try:
             key = stdscr.getch()
         except Exception:
@@ -128,20 +156,21 @@ def curses_main(stdscr, bearer_token, users):
             if key in [ord("q"), ord("Q")]:
                 break  # exit the loop
             elif key in [ord("a"), ord("A")]:
-                # Temporarily switch to blocking mode for input
+                # Temporarily switch to blocking mode for input.
                 stdscr.nodelay(False)
                 new_email = prompt_input(input_win, "Enter email to add:")
                 if new_email and new_email not in users:
                     users.append(new_email)
+                    update_user_list_file(list_path, users)
                 stdscr.nodelay(True)
             elif key in [ord("r"), ord("R")]:
                 stdscr.nodelay(False)
                 rem_email = prompt_input(input_win, "Enter email to remove:")
                 if rem_email in users:
                     users.remove(rem_email)
+                    update_user_list_file(list_path, users)
                 stdscr.nodelay(True)
         time.sleep(0.1)
-
 
 if __name__ == "__main__":
     args = build_argparser().parse_args()
@@ -161,5 +190,5 @@ if __name__ == "__main__":
     )
 
     # Launch the curses TUI.
-    curses.wrapper(curses_main, bearer_token, users)
+    curses.wrapper(curses_main, bearer_token, users, list_path)
 
