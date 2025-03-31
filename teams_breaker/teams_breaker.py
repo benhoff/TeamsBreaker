@@ -142,10 +142,6 @@ if __name__ == "__main__":
     if args.enum_users:
         logger.info("Running in enumeration mode.")
 
-    if args.send and not args.configuration:
-        logger.error("Configuration file parameter needed when sending.")
-        sys.exit(1)
-
     if args.configuration and args.list:
         logger.error("Cannot use both configuration file and list parameters at the same time.")
         sys.exit(1)
