@@ -66,6 +66,8 @@ class TeamsUser:
             "Content-Type": "application/json",
             "Authorization": "Bearer " + self.btoken,
         }
+        if mri is None:
+            mri = self.mri
 
         payload = [{"mri": mri}]
 
