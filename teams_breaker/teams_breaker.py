@@ -80,7 +80,7 @@ def prompt_input(win, prompt):
     curses.noecho()
     return input_str.strip()
 
-def update_status_thread(bearer_token, users, statuses, users_lock, statuses_lock, termination_event):
+def update_status_thread(bearer_token, users, statuses, users_lock, statuses_lock, shared_info, termination_event):
     """Background thread that updates statuses periodically."""
     while not termination_event.is_set():
         # Copy the current user list safely.
@@ -91,13 +91,15 @@ def update_status_thread(bearer_token, users, statuses, users_lock, statuses_loc
         with statuses_lock:
             statuses.clear()
             statuses.extend(new_statuses)
+            # Update the last updated timestamp.
+            shared_info["last_update"] = time.time()
         # Wait for the next refresh cycle.
         for _ in range(REFRESH_INTERVAL):
             if termination_event.is_set():
                 break
             time.sleep(1)
 
-def curses_main(stdscr, bearer_token, users, list_path, statuses, users_lock, statuses_lock, termination_event):
+def curses_main(stdscr, bearer_token, users, list_path, statuses, users_lock, statuses_lock, shared_info, termination_event):
     curses.curs_set(0)  # Hide cursor.
     stdscr.nodelay(True)  # Non-blocking input.
 
@@ -118,23 +120,51 @@ def curses_main(stdscr, bearer_token, users, list_path, statuses, users_lock, st
         # Read the current statuses.
         with statuses_lock:
             current_statuses = list(statuses)
+            last_update = shared_info.get("last_update")
+
+        # Sort statuses by domain (extracted from email) and then by email.
+        sorted_statuses = sorted(
+            current_statuses,
+            key=lambda row: (row[0].split("@")[-1].lower(), row[0].lower())
+        )
 
         # Clear windows.
         status_win.clear()
         input_win.clear()
 
-        # Draw table header.
+        # Build header string.
         header = " Email ".ljust(30) + "| Availability ".ljust(20) + "| Device Type "
         status_win.addstr(0, 0, header)
+
+        # Display the last updated timestamp on the header.
+        if last_update:
+            formatted_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last_update))
+            last_updated_str = f"Last updated: {formatted_time}"
+        else:
+            last_updated_str = "Last updated: N/A"
+        # Position the timestamp on the right-hand side.
+        status_win.addstr(0, width - len(last_updated_str) - 1, last_updated_str)
+
         status_win.addstr(1, 0, "-" * (len(header) + 10))
 
-        # Display each user status.
-        for idx, row in enumerate(current_statuses):
+        # Display each user status grouped by domain.
+        current_domain = None
+        row_y = 2
+        for row in sorted_statuses:
             email, availability, device = row
-            row_y = idx + 2
-            if row_y >= height - 4:
-                break  # Prevent writing outside the window.
+            domain = email.split("@")[-1].lower()
+            # If new domain group, add a header row.
+            if domain != current_domain:
+                current_domain = domain
+                if row_y < height - 4:
+                    status_win.addstr(row_y, 0, f" Domain: {domain} ", curses.A_BOLD)
+                    row_y += 1
 
+            # Prevent writing outside the window.
+            if row_y >= height - 4:
+                break
+
+            # Display the user row.
             # Print email.
             status_win.addstr(row_y, 0, f" {email:<28} | ")
 
@@ -152,6 +182,8 @@ def curses_main(stdscr, bearer_token, users, list_path, statuses, users_lock, st
             status_win.addstr(f"{availability:<18}", color_attr)
             # Continue with device type.
             status_win.addstr(" | " + f"{device}")
+            row_y += 1
+
         status_win.refresh()
 
         # Display command options.
@@ -197,6 +229,7 @@ if __name__ == "__main__":
 
     list_path = Path(args.list)
     if list_path.is_file():
+        # Remove any duplicates and preserve a list of emails.
         users = list(set(list_path.read_text().strip().splitlines()))
     else:
         logger.error("User list file does not exist or it is not a file!")
@@ -208,21 +241,22 @@ if __name__ == "__main__":
     )
 
     # Shared data structures for thread communication.
-    statuses = []           # Shared statuses list.
-    users_lock = threading.Lock()    # Protects the users list.
-    statuses_lock = threading.Lock() # Protects the statuses list.
+    statuses = []                      # Shared statuses list.
+    users_lock = threading.Lock()      # Protects the users list.
+    statuses_lock = threading.Lock()   # Protects the statuses list.
+    shared_info = {"last_update": None}  # Holds the last update timestamp.
     termination_event = threading.Event()
 
     # Start the background thread to update statuses.
     status_thread = threading.Thread(
         target=update_status_thread,
-        args=(bearer_token, users, statuses, users_lock, statuses_lock, termination_event),
+        args=(bearer_token, users, statuses, users_lock, statuses_lock, shared_info, termination_event),
         daemon=True,
     )
     status_thread.start()
 
     # Launch the curses TUI.
-    curses.wrapper(curses_main, bearer_token, users, list_path, statuses, users_lock, statuses_lock, termination_event)
+    curses.wrapper(curses_main, bearer_token, users, list_path, statuses, users_lock, statuses_lock, shared_info, termination_event)
 
     # Wait for the background thread to exit.
     status_thread.join()
