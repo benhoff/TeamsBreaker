@@ -10,6 +10,7 @@ class TeamsUser:
         self.btoken = bearer_token
         self.username = username
         self.useragent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko)"
+        self.mri = None
 
     def get_status(self):
         headers = {
@@ -19,7 +20,7 @@ class TeamsUser:
         }
 
         content = requests.get(
-            "https://teams.microsoft.com/api/mt/amer-03/beta/users/%s/externalsearchv3?includeTFLUsers=true"
+            "https://teams.microsoft.com/api/mt/part/amer-03/beta/users/%s/externalsearchv3?includeTFLUsers=true"
             % (self.username),
             headers=headers,
             timeout=10,
@@ -34,6 +35,7 @@ class TeamsUser:
         if content.status_code == 401:
             logger.error("Unable to enumerate user. Is the access token valid?")
             sys.exit(1)
+        content.raise_for_status()
 
         if content.status_code != 200 or (content.status_code == 200 and len(content.text) < 3):
             logger.warning(
@@ -43,13 +45,14 @@ class TeamsUser:
             return None
 
         user_profile = json.loads(content.text)[0]
+        self.mri = user_profile["mri"]
         if "sfb" in user_profile["mri"]:
             logger.warning("This user has a Skype for Business subscription and cannot be sent files.")
             return None
         else:
             return user_profile
 
-    def check_teams_presence(self, mri):
+    def check_teams_presence(self, mri=None):
         """
         Checks the presence of a user, using the teams.microsoft.com endpoint
 

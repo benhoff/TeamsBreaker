@@ -45,8 +45,7 @@ def print_users_status(bearer_token, users):
         ustatus = user.get_status()
         if ustatus:
             time.sleep(0.33)
-            mri = ustatus["mri"]
-            user_info = user.check_teams_presence(mri)[0]
+            user_info = user.check_teams_presence()[0]
             presence = user_info["presence"]
             availability = presence["availability"]
             # color = availability_map[availability]
@@ -100,4 +99,3 @@ if __name__ == "__main__":
     method = "closed_chat"
 
     print_users_status(bearer_token, users)
-    sys.exit(0)
